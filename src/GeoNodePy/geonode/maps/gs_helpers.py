@@ -136,7 +136,9 @@ def cascading_delete(cat, resource):
         styles = lyr.styles + [lyr.default_style]
         cat.delete(lyr)
         for s in styles:
-            if s is not None:
+            # don't remove default styles
+            # if s is not None:
+            if s is not None and s.name not in _style_templates:
                 cat.delete(s, purge=True)
         cat.delete(resource)
         if store.resource_type == 'dataStore' and 'dbtype' in store.connection_parameters and store.connection_parameters['dbtype'] == 'postgis':
