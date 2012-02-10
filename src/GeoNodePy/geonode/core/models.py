@@ -237,4 +237,56 @@ def autologin(sender, **kwargs):
     # This login function does not need password.
     login(request, user)
 
-user_activated.connect(autologin)
+#CIGNo
+# user_activated.connect(autologin)
+# add approval flag to RegistrationProfile
+from registration.models import RegistrationProfile
+RegistrationProfile.add_to_class('approved', models.BooleanField(default=False))
+
+from django.core.mail import mail_admins
+from django.contrib.sites.models import RequestSite
+from django.contrib.sites.models import Site
+from django.core import urlresolvers
+from django.db.models import signals
+from django.template.loader import render_to_string
+from django.conf import settings
+
+def get_current_site():
+    if Site._meta.installed:
+        return Site.objects.get_current()
+    else:
+        return RequestSite(request)
+    
+
+def deactivate(sender, **kwargs):
+    user = User.objects.get(username=kwargs['user'])
+    user.is_active = False
+    user.save()
+
+    # http://{{ site.domain }}{% url registration_activate activation_key %}
+    # {% url admin:metadata_layerext_changelist %}
+    # get admin url2A
+    site = get_current_site()
+    registration = user.registrationprofile_set.all()[0]
+    user_url = urlresolvers.reverse('admin:registration_registrationprofile_change', args=(registration.pk,))
+    mail_admins('Account pending', '%s is waiting for approval. Active user at http://%s%s' % (user.username, site, user_url))
+user_activated.connect(deactivate)
+
+def approve(instance, sender, created, **kwargs):
+    if instance.approved and not instance.user.is_active:
+        instance.user.is_active = True
+        instance.user.save()
+        
+        ctx_dict = {'site': get_current_site()}
+        subject = render_to_string('registration/approval_email_subject.txt',
+                                   ctx_dict)
+        # Email subject *must not* contain newlines
+        subject = ''.join(subject.splitlines())
+        
+        message = render_to_string('registration/approval_email.txt',
+                                   ctx_dict)
+        
+        instance.user.email_user(subject, message, settings.DEFAULT_FROM_EMAIL)
+    
+signals.post_save.connect(approve, sender=RegistrationProfile)
+
