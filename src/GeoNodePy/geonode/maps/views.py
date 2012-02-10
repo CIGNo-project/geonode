@@ -33,6 +33,9 @@ from django.forms.models import inlineformset_factory
 from django.db.models import Q
 import logging
 
+from cigno.mdtools.views_rdf import _classification_search
+from cigno.metadata.models import Resource
+
 logger = logging.getLogger("geonode.maps.views")
 
 _user, _password = settings.GEOSERVER_CREDENTIALS
@@ -824,7 +827,8 @@ def layerController(request, layername):
     DEFAULT_MAP_CONFIG, DEFAULT_BASE_LAYERS = default_map_config()
     layer = get_object_or_404(Layer, typename=layername)
     if (request.META['QUERY_STRING'] == "describe"):
-        return _describe_layer(request,layer)
+        return HttpResponseRedirect("/admin/metadata/layerext/%s/" % layer.pk)
+        #return _describe_layer(request,layer)
     if (request.META['QUERY_STRING'] == "remove"):
         return _removeLayer(request,layer)
     if (request.META['QUERY_STRING'] == "update"):
@@ -870,7 +874,8 @@ def upload_layer(request):
         form = NewLayerUploadForm(request.POST, request.FILES)
         tempdir = None
         if form.is_valid():
-            try:
+            #try:
+            if True:
                 tempdir, base_file = form.write_files()
                 name, __ = os.path.splitext(form.cleaned_data["base_file"].name)
                 saved_layer = save(name, base_file, request.user, 
@@ -882,14 +887,14 @@ def upload_layer(request):
                 return HttpResponse(json.dumps({
                     "success": True,
                     "redirect_to": saved_layer.get_absolute_url() + "?describe"}))
-            except Exception, e:
-                logger.exception("Unexpected error during upload.")
-                return HttpResponse(json.dumps({
-                    "success": False,
-                    "errors": ["Unexpected error during upload: " + escape(str(e))]}))
-            finally:
-                if tempdir is not None:
-                    shutil.rmtree(tempdir)
+#             except Exception, e:
+#                 logger.exception("Unexpected error during upload.")
+#                 return HttpResponse(json.dumps({
+#                     "success": False,
+#                     "errors": ["Unexpected error during upload: " + escape(str(e))]}))
+#             finally:
+#                 if tempdir is not None:
+#                     shutil.rmtree(tempdir)
         else:
             errors = []
             for e in form.errors.values():
@@ -1223,10 +1228,19 @@ def metadata_search(request):
             # ignore...
             pass
 
-    result = _metadata_search(query, start, limit, **advanced)
+    # CIGNo rdf store
+    node = params.get('node', '')
+    if node:
+        advanced = {}
+        advanced['node'] = node
+        result = _classification_search(query, start, limit, **advanced)
+    else:
+        result = _metadata_search(query, start, limit, **advanced)
+
 
     # XXX slowdown here to dig out result permissions
     for doc in result['rows']: 
+        icon = 'silk/page_white.png' # default
         try: 
             layer = Layer.objects.get(uuid=doc['uuid'])
             doc['_local'] = True
@@ -1236,9 +1250,23 @@ def metadata_search(request):
                 'delete': request.user.has_perm('maps.delete_layer', obj=layer),
                 'change_permissions': request.user.has_perm('maps.change_layer_permissions', obj=layer),
             }
+            if layer.storeType == 'dataStore':
+                icon = 'geosilk/page_white_vector.png'
+            elif layer.storeType == 'coverageStore':
+                icon = 'geosilk/page_white_raster.png'
         except Layer.DoesNotExist:
             doc['_local'] = False
-            pass
+            # pass
+
+            # try:
+            le = Resource.objects.get(uuid=doc['uuid'])
+            if le.mimetype == 'application/pdf':
+                icon = 'silk/page_white_acrobat.png'
+                #except Resource.DoesNotExist:
+                #pass
+        # move in SearchTable
+        doc['title'] = "%s  %s" % ('<img style="margin: 0px; padding: 0px;" src="/static/geonode/theme/app/img/%s"/>' % icon, doc['title'])
+
 
     result['success'] = True
     return HttpResponse(json.dumps(result), mimetype="application/json")
