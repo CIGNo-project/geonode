@@ -30,8 +30,13 @@
 </p>
 
 <p><b>{% trans "Keywords:" %}</b>
-{% for kw in rec.identification.keywords.list %}
-  {{kw}}{% if not forloop.last %}, {% endif %}
+{% for kws in rec.identification.keywords %}
+  {% for kw in kws.keywords %}
+    {{kw}}{% if not forloop.last %}, {% endif %}
+    {% if forloop.last and kws.thesaurus %}
+      ({{ kws.thesaurus.title }})
+    {% endif %}
+  {% endfor %}
 {% empty %}
 <em>{% trans "No keywords are listed for this layer." %}</em>
 {% endfor %}
