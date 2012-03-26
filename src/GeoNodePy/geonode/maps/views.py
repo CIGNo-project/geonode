@@ -9,7 +9,6 @@ from django import forms
 from django.contrib.auth import authenticate, get_backends as get_auth_backends
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.contrib.gis.geos import GEOSGeometry
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.urlresolvers import reverse
 from django.db import transaction
@@ -32,6 +31,7 @@ from django.views.decorators.csrf import csrf_exempt, csrf_response_exempt
 from django.forms.models import inlineformset_factory
 from django.db.models import Q
 import logging
+from geonode.maps.utils import forward_mercator
 
 from cigno.mdtools.views_rdf import _classification_search
 from cigno.metadata.models import Resource
@@ -43,15 +43,8 @@ _user, _password = settings.GEOSERVER_CREDENTIALS
 DEFAULT_TITLE = ""
 DEFAULT_ABSTRACT = ""
 
-def _project_center(llcenter):
-    wkt = "POINT({x} {y})".format(x=llcenter[0],y=llcenter[1])
-    center = GEOSGeometry(wkt, srid=4326)
-    center.transform("+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs")
-    return center.x, center.y
-
 def default_map_config():
-
-    _DEFAULT_MAP_CENTER = _project_center(settings.DEFAULT_MAP_CENTER)
+    _DEFAULT_MAP_CENTER = forward_mercator(settings.DEFAULT_MAP_CENTER)
 
     _default_map = Map(
         title=DEFAULT_TITLE, 
@@ -178,6 +171,8 @@ def mapJSON(request, mapid):
                 mimetype="text/plain"
             )
         map = get_object_or_404(Map, pk=mapid)
+        if not request.user.has_perm('maps.change_map', obj=map):
+            return HttpResponse("You are not allowed to modify this map.", status=403)
         try:
             map.update_from_viewer(request.raw_post_data)
 
@@ -262,9 +257,8 @@ def newmap_config(request):
                 minx, maxx, miny, maxy = [float(c) for c in bbox]
                 x = (minx + maxx) / 2
                 y = (miny + maxy) / 2
-                wkt = "POINT(" + str(x) + " " + str(y) + ")"
-                center = GEOSGeometry(wkt, srid=4326)
-                center.transform("+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs")
+
+                center = forward_mercator((x, y))
 
                 if maxx == minx:
                     width_zoom = 15
@@ -275,8 +269,8 @@ def newmap_config(request):
                 else:
                     height_zoom = math.log(360 / (maxy - miny), 2)
 
-                map.center_x = center.x
-                map.center_y = center.y
+                map.center_x = center[0]
+                map.center_y = center[1]
                 map.zoom = math.ceil(min(width_zoom, height_zoom))
 
             
@@ -707,7 +701,8 @@ class LayerDescriptionForm(forms.Form):
 
 @csrf_exempt
 @login_required
-def _describe_layer(request, layer):
+def layer_metadata(request, layername):
+    layer = get_object_or_404(Layer, typename=layername)
     if request.user.is_authenticated():
         if not request.user.has_perm('maps.change_layer', obj=layer):
             return HttpResponse(loader.render_to_string('401.html', 
@@ -769,7 +764,8 @@ def _describe_layer(request, layer):
         return HttpResponse("Not allowed", status=403)
 
 @csrf_exempt
-def _removeLayer(request,layer):
+def layer_remove(request, layername):
+    layer = get_object_or_404(Layer, typename=layername)
     if request.user.is_authenticated():
         if not request.user.has_perm('maps.delete_layer', obj=layer):
             return HttpResponse(loader.render_to_string('401.html', 
@@ -789,7 +785,8 @@ def _removeLayer(request,layer):
         return HttpResponse("Not allowed",status=403)
 
 @csrf_exempt
-def _changeLayerDefaultStyle(request,layer):
+def layer_style(request, layername):
+    layer = get_object_or_404(Layer, typename=layername)
     if request.user.is_authenticated():
         if not request.user.has_perm('maps.change_layer', obj=layer):
             return HttpResponse(loader.render_to_string('401.html', 
@@ -823,38 +820,28 @@ def _changeLayerDefaultStyle(request,layer):
         return HttpResponse("Not allowed",status=403)
 
 @csrf_exempt
-def layerController(request, layername):
-    DEFAULT_MAP_CONFIG, DEFAULT_BASE_LAYERS = default_map_config()
+def layer_detail(request, layername):
     layer = get_object_or_404(Layer, typename=layername)
-    if (request.META['QUERY_STRING'] == "describe"):
-        return HttpResponseRedirect("/admin/metadata/layerext/%s/" % layer.pk)
-        #return _describe_layer(request,layer)
-    if (request.META['QUERY_STRING'] == "remove"):
-        return _removeLayer(request,layer)
-    if (request.META['QUERY_STRING'] == "update"):
-        return _updateLayer(request,layer)
-    if (request.META['QUERY_STRING'] == "style"):
-        return _changeLayerDefaultStyle(request,layer)
-    else: 
-        if not request.user.has_perm('maps.view_layer', obj=layer):
-            return HttpResponse(loader.render_to_string('401.html', 
-                RequestContext(request, {'error_message': 
-                    _("You are not permitted to view this layer")})), status=401)
-        
-        metadata = layer.metadata_csw()
+    if not request.user.has_perm('maps.view_layer', obj=layer):
+        return HttpResponse(loader.render_to_string('401.html', 
+            RequestContext(request, {'error_message': 
+                _("You are not permitted to view this layer")})), status=401)
+    
+    metadata = layer.metadata_csw()
 
-        maplayer = MapLayer(name = layer.typename, ows_url = settings.GEOSERVER_BASE_URL + "wms")
+    maplayer = MapLayer(name = layer.typename, ows_url = settings.GEOSERVER_BASE_URL + "wms")
 
-        # center/zoom don't matter; the viewer will center on the layer bounds
-        map = Map(projection="EPSG:900913")
+    # center/zoom don't matter; the viewer will center on the layer bounds
+    map = Map(projection="EPSG:900913")
+    DEFAULT_BASE_LAYERS = default_map_config()[1]
 
-        return render_to_response('maps/layer.html', RequestContext(request, {
-            "layer": layer,
-            "metadata": metadata,
-            "viewer": json.dumps(map.viewer_json(* (DEFAULT_BASE_LAYERS + [maplayer]))),
-            "permissions_json": _perms_info_json(layer, LAYER_LEV_NAMES),
-            "GEOSERVER_BASE_URL": settings.GEOSERVER_BASE_URL
-	    }))
+    return render_to_response('maps/layer.html', RequestContext(request, {
+        "layer": layer,
+        "metadata": metadata,
+        "viewer": json.dumps(map.viewer_json(* (DEFAULT_BASE_LAYERS + [maplayer]))),
+        "permissions_json": _perms_info_json(layer, LAYER_LEV_NAMES),
+        "GEOSERVER_BASE_URL": settings.GEOSERVER_BASE_URL
+    }))
 
 
 GENERIC_UPLOAD_ERROR = _("There was an error while attempting to upload your data. \
@@ -874,8 +861,7 @@ def upload_layer(request):
         form = NewLayerUploadForm(request.POST, request.FILES)
         tempdir = None
         if form.is_valid():
-            #try:
-            if True:
+            try:
                 tempdir, base_file = form.write_files()
                 name, __ = os.path.splitext(form.cleaned_data["base_file"].name)
                 saved_layer = save(name, base_file, request.user, 
@@ -886,15 +872,15 @@ def upload_layer(request):
                         )
                 return HttpResponse(json.dumps({
                     "success": True,
-                    "redirect_to": saved_layer.get_absolute_url() + "?describe"}))
-#             except Exception, e:
-#                 logger.exception("Unexpected error during upload.")
-#                 return HttpResponse(json.dumps({
-#                     "success": False,
-#                     "errors": ["Unexpected error during upload: " + escape(str(e))]}))
-#             finally:
-#                 if tempdir is not None:
-#                     shutil.rmtree(tempdir)
+                    "redirect_to": reverse('layer_metadata', args=[saved_layer.typename])}))
+            except Exception, e:
+                logger.exception("Unexpected error during upload.")
+                return HttpResponse(json.dumps({
+                    "success": False,
+                    "errors": ["Unexpected error during upload: " + escape(str(e))]}))
+            finally:
+                if tempdir is not None:
+                    shutil.rmtree(tempdir)
         else:
             errors = []
             for e in form.errors.values():
@@ -903,12 +889,12 @@ def upload_layer(request):
 
 @login_required
 @csrf_exempt
-def _updateLayer(request, layer):
+def layer_replace(request, layername):
+    layer = get_object_or_404(Layer, typename=layername)
     if not request.user.has_perm('maps.change_layer', obj=layer):
         return HttpResponse(loader.render_to_string('401.html', 
             RequestContext(request, {'error_message': 
                 _("You are not permitted to modify this layer")})), status=401)
-    
     if request.method == 'GET':
         cat = Layer.objects.gs_catalog
         info = cat.get_resource(layer.name)
@@ -933,7 +919,7 @@ def _updateLayer(request, layer):
                 saved_layer = save(layer, base_file, request.user, overwrite=True)
                 return HttpResponse(json.dumps({
                     "success": True,
-                    "redirect_to": saved_layer.get_absolute_url() + "?describe"}))
+                    "redirect_to": reverse('layer_metadata', args=[saved_layer.typename])}))
             except Exception, e:
                 logger.exception("Unexpected error during upload.")
                 return HttpResponse(json.dumps({
@@ -1258,14 +1244,21 @@ def metadata_search(request):
             doc['_local'] = False
             # pass
 
-            # try:
-            le = Resource.objects.get(uuid=doc['uuid'])
-            if le.mimetype == 'application/pdf':
-                icon = 'silk/page_white_acrobat.png'
-                #except Resource.DoesNotExist:
-                #pass
+            try:
+                r = Resource.objects.get(uuid=doc['uuid'])
+#                 doc['_permissions'] = {
+#                     'view': request.user.has_perm('metadata.view_resource', obj=r),
+#                     'change': request.user.has_perm('metadata.change_resource', obj=r),
+#                     'delete': request.user.has_perm('metadata.delete_resource', obj=r),
+#                     'change_permissions': request.user.has_perm('metadata.change_resource_permissions', obj=r),
+#                     }
+                if r.mimetype == 'application/pdf':
+                    icon = 'silk/page_white_acrobat.png'
+            except Resource.DoesNotExist:
+                pass
         # move in SearchTable
-        doc['title'] = "%s  %s" % ('<img style="margin: 0px; padding: 0px;" src="/static/geonode/theme/app/img/%s"/>' % icon, doc['title'])
+        # prbolema nel relations manager
+        # doc['title'] = "%s  %s" % ('<img style="margin: 0px; padding: 0px;" src="/static/geonode/theme/app/img/%s"/>' % icon, doc['title'])
 
 
     result['success'] = True
@@ -1359,7 +1352,8 @@ def _extract_links(rec, xml):
     format_re = re.compile(".*\((.*)(\s*Format*\s*)\).*?")
 
     for link in xml.findall("*//" + nspath("onLine", namespaces['gmd'])):
-        if link.find(dl_type_path).text == "WWW:DOWNLOAD-1.0-http--download":
+        dl_type = link.find(dl_type_path)
+        if dl_type is not None and dl_type.text == "WWW:DOWNLOAD-1.0-http--download":
             extension = link.find(dl_name_path).text.split('.')[-1]
             format = format_re.match(link.find(dl_description_path).text).groups()[0]
             url = link.find(dl_link_path).text
@@ -1641,6 +1635,13 @@ def batch_permissions(request):
             if not request.user.has_perm("maps.change_map_permissions", obj=map):
                 return HttpResponse("User not authorized to change map permissions", status=403)
 
+    if "resources" in spec:
+        resources = Resource.objects.filter(pk__in = spec['resources'])
+        for resource in resources:
+            logger.debug("test permissions for resource %s" % resource)
+            if not request.user.has_perm("metadata.change_resource_permissions", obj=resource):
+                return HttpResponse("User not authorized to change resource permissions", status=403)
+
     anon_level = spec['permissions'].get("anonymous")
     auth_level = spec['permissions'].get("authenticated")
     users = spec['permissions'].get('users', [])
@@ -1679,7 +1680,28 @@ def batch_permissions(request):
             for user, user_level in spec['permissions'].get("users", []):
                 user_level = user_level.replace("layer", "map")
                 m.set_user_level(user, valid_perms.get(user_level, "_none"))
+ 
+    if "resources" in spec:
+        resources = Resource.objects.filter(pk__in = spec['resources'])
+        valid_perms = ['layer_readwrite', 'layer_readonly']
+        logger.debug("anon_level %s, auth_level %s" % (anon_level, auth_level))
+        if anon_level not in valid_perms:
+            anon_level = "_none"
+        if auth_level not in valid_perms:
+            auth_level = "_none"
+        anon_level = anon_level.replace("layer", "resource")
+        auth_level = auth_level.replace("layer", "resource")
+        logger.debug("anon_level %s, auth_level %s" % (anon_level, auth_level))
 
+        for r in resources:
+            logger.debug("set permissions for resource %s" % r)
+            r.get_user_levels().exclude(user__username__in = user_names + [r.owner.username]).delete()
+            r.set_gen_level(ANONYMOUS_USERS, anon_level)
+            r.set_gen_level(AUTHENTICATED_USERS, auth_level)
+            for user, user_level in spec['permissions'].get("users", []):
+                user_level = user_level.replace("layer", "resource")
+                r.set_user_level(user, valid_perms.get(user_level, "_none"))
+               
     return HttpResponse("Not implemented yet")
 
 def batch_delete(request):
@@ -1703,13 +1725,23 @@ def batch_delete(request):
             if not request.user.has_perm("maps.delete_map", obj=map):
                 return HttpResponse("User not authorized to delete map", status=403)
 
+    if "resources" in spec:
+        resources = Resource.objects.filter(pk__in = spec['resources'])
+        for resource in resources:
+            if not request.user.has_perm("metadata.delete_resource", obj=resource):
+                return HttpResponse("User not authorized to delete resource", status=403)
+
     if "layers" in spec:
         Layer.objects.filter(pk__in = spec["layers"]).delete()
 
     if "maps" in spec:
         Map.objects.filter(pk__in = spec["maps"]).delete()
 
+    if "resources" in spec:
+        Resource.objects.filter(pk__in = spec["resources"]).delete()
+
     nlayers = len(spec.get('layers', []))
     nmaps = len(spec.get('maps', []))
+    nresources = len(spec.get('resources', []))
 
-    return HttpResponse("Deleted %d layers and %d maps" % (nlayers, nmaps))
+    return HttpResponse("Deleted %d layers, % resources and %d maps" % (nlayers, nresources, nmaps))
