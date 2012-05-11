@@ -1,7 +1,8 @@
+--extra-index-url=http://dist.pinaxproject.com/dev
+
 PIL
 OWSLib==0.4.0
-Django==1.2
-simplejson # needed for python2.5
+Django==1.4
 django-extensions
 httplib2
 gsconfig
@@ -9,5 +10,8 @@ django-registration
 django-profiles
 -e git+https://github.com/ericflo/django-avatar.git#egg=avatar
 django-staticfiles
+dialogos==0.1.dev4
+agon-ratings==0.2
 South==0.7.3
+django-taggit==0.9.3
 lxml
