@@ -33,7 +33,14 @@ Ext.onReady(function() {
             format: "grid",
             actionTarget: "main.tbar",
             outputConfig: {width: 400, height: 300}
-        }],
+        },{
+            ptype: "gxp_measure",
+            actionTarget: "main.tbar"
+       } 
+                // enable filtrable layer
+                // , { ptype: "gxp_featuremanager", id: "featuremanager", maxFeatures: 20 }
+                // ,{ ptype: "gxp_wmsfilterview", actionTarget: "main", featureManager: "featuremanager", }
+               ],
         proxy: "/proxy/?url=",
 
         /* The URL to a REST map configuration service.  This service 
