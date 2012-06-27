@@ -1,29 +1,8 @@
-from django.conf import settings
-from geonode.maps.models import Map
 from django import forms
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.models import User
 from django.http import HttpResponse
-from django.shortcuts import render_to_response
-from django.template import RequestContext
-from django.views.decorators.csrf import csrf_exempt
 from django.utils import simplejson as json
-
-def index(request): 
-    return render_to_response('index.html', RequestContext(request))
-
-def help(request):
-    return render_to_response('help.html', RequestContext(request, {
-        "GEOSERVER_BASE_URL": settings.GEOSERVER_BASE_URL,
-        "site" : settings.SITEURL
-    }))
-
-def developer(request):
-    return render_to_response("developer.html", RequestContext(request, {
-        "GEOSERVER_BASE_URL": settings.GEOSERVER_BASE_URL,
-        "GEONETWORK_BASE_URL": settings.GEONETWORK_BASE_URL,
-        "site": settings.SITEURL
-    }))
 
 class AjaxLoginForm(forms.Form):
     password = forms.CharField(widget=forms.PasswordInput)
