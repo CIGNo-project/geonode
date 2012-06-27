@@ -10,3 +10,11 @@
 <script type="text/javascript">
 OpenLayers.ImgPath = "{{ GEONODE_CLIENT_LOCATION }}externals/openlayers/img/";
 </script>
+<style>
+    /* avoid pink tiles */
+    .olImageLoadError {
+    background-color: transparent !important;
+    opacity: 0 !important;
+    filter: alpha(opacity=0) !important; /* IE */
+    }
+</style>
