@@ -44,3 +44,20 @@ pip-log.txt
 #Testing output
 .coverage
 nosetests.xml
+
+#cigno integration stuff
+shared/package/bootstrap.py
+shared/package/deploy-libs.txt
+shared/package/geonetwork.war
+shared/package/geonode-webapp.pybundle
+shared/package/geoserver.war
+shared/package/requirements.txt
+src/GeoNodePy/dist/
+src/GeoNodePy/geonode/maps/migrations/0005_initial.py
+src/GeoNodePy/geonode/static/geonode/
+src/django-elfinder/
+src/django-modeltranslation/
+src/fuxi/
+src/geonode-client/cignojs.cfg
+src/rdfextras/
+src/virtuoso/
