@@ -46,7 +46,8 @@ GeoNode.SearchTable = Ext.extend(Ext.util.Observable, {
                 {name: 'metadata_links'},
                 {name: 'bbox'},
                 {name: '_local'},
-                {name: '_permissions'}
+                {name: '_permissions'},
+                {name: '_rtype', type: 'string'}
             ]
         });
         this.searchStore.on('load', function() {
@@ -263,6 +264,19 @@ GeoNode.SearchTable = Ext.extend(Ext.util.Observable, {
                         else {
                             info_type = 'info-layer';
                         }
+                        var resource_type = record.get('_rtype');
+                        if (resource_type == 'layer/vector'){
+                            info_type = 'vector-layer';
+                        }
+                        else if (resource_type == 'layer/raster'){
+                            info_type = 'raster-layer';
+                        }
+                        else if (resource_type == 'application/pdf'){
+                            info_type = 'pdf-resource';
+                        }
+                        else{
+                            info_type = 'generic-resource';
+                        }
                     }
                     else {
                         info_type = 'remote-layer';
@@ -284,7 +298,8 @@ GeoNode.SearchTable = Ext.extend(Ext.util.Observable, {
                      *  is tied to rendered div's class.
                      */
                     var permissions = record.get('_permissions');
-                    if (permissions.view != true) {
+                    var resource_type = record.get('_rtype');
+                    if (permissions.view != true || (resource_type != 'layer/raster' && resource_type != 'layer/vector')) {
                         return '<div>&#160;</div>'
                     } else {
                         return '<div class="x-grid3-row-checker">&#160;</div>';

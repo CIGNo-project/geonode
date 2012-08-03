@@ -846,7 +846,8 @@ def upload_layer(request):
                         )
                 return HttpResponse(json.dumps({
                     "success": True,
-                    "redirect_to": reverse('data_metadata', args=[saved_layer.typename])}))
+                    # "redirect_to": reverse('data_metadata', args=[saved_layer.typename])}))
+                    "redirect_to": reverse('layerext_metadata', args=[saved_layer.typename])}))
             except Exception, e:
                 logger.exception("Unexpected error during upload.")
                 return HttpResponse(json.dumps({
@@ -1170,7 +1171,27 @@ def metadata_search(request):
         except Exception:
             # ignore...
             pass
+        
+    _cql = []
+    cql = params.get('cql', None)
+    if cql:
+        _cql.append(cql)
 
+    tempextent_begin = params.get('tempextent_begin', None)
+    if tempextent_begin:
+        _cql.append("tempextent_end > '%s'" % tempextent_begin)
+
+    tempextent_end = params.get('tempextent_end', None)
+    if tempextent_end:
+        _cql.append("tempextent_begin < '%s'" % tempextent_end)
+
+    if 'bbox' in advanced:
+        _cql.append("BBOX(BoundingBox,%s)" % ','.join([str(b) for b in bbox]))
+
+    if len(_cql) > 0:
+        advanced['cql'] = ' and '.join(_cql)
+
+        
     # CIGNo rdf store
     node = params.get('node', '')
     if node:
@@ -1194,25 +1215,25 @@ def metadata_search(request):
                 'change_permissions': request.user.has_perm('maps.change_layer_permissions', obj=layer),
             }
             if layer.storeType == 'dataStore':
-                icon = 'geosilk/page_white_vector.png'
+                doc['_rtype'] = 'layer/vector'
             elif layer.storeType == 'coverageStore':
-                icon = 'geosilk/page_white_raster.png'
+                doc['_rtype'] = 'layer/raster'
         except Layer.DoesNotExist:
-            doc['_local'] = False
-            # pass
-
             try:
                 r = Resource.objects.get(uuid=doc['uuid'])
-#                 doc['_permissions'] = {
-#                     'view': request.user.has_perm('metadata.view_resource', obj=r),
-#                     'change': request.user.has_perm('metadata.change_resource', obj=r),
-#                     'delete': request.user.has_perm('metadata.delete_resource', obj=r),
-#                     'change_permissions': request.user.has_perm('metadata.change_resource_permissions', obj=r),
-#                     }
-                if r.mimetype == 'application/pdf':
-                    icon = 'silk/page_white_acrobat.png'
+                doc['_permissions'] = {
+                    'view': request.user.has_perm('metadata.view_resource', obj=r),
+                    'change': request.user.has_perm('metadata.change_resource', obj=r),
+                    'delete': request.user.has_perm('metadata.delete_resource', obj=r),
+                    'change_permissions': request.user.has_perm('metadata.change_resource_permissions', obj=r),
+                    }
+                doc['_local'] = True
+                doc['_rtype'] = r.mimetype
+                # if r.mimetype == 'application/pdf':
+                #    icon = 'silk/page_white_acrobat.png'
             except Resource.DoesNotExist:
-                pass
+                doc['_local'] = False
+
         # move in SearchTable
         # prbolema nel relations manager
         # doc['title'] = "%s  %s" % ('<img style="margin: 0px; padding: 0px;" src="/static/geonode/theme/app/img/%s"/>' % icon, doc['title'])
@@ -1226,7 +1247,7 @@ def _metadata_search(query, start, limit, **kw):
 
     keywords = _split_query(query)
     
-    csw.getrecords(keywords=keywords, startposition=start+1, maxrecords=limit, bbox=kw.get('bbox', None))
+    csw.getrecords(keywords=keywords, startposition=start+1, maxrecords=limit, bbox=kw.get('bbox', None), cql=kw.get('cql', None))
     
     
     # build results 
@@ -1252,7 +1273,7 @@ def _metadata_search(query, start, limit, **kw):
 
     next_page = csw.results.get('nextrecord', 0) 
     if next_page > 0:
-        params = urlencode({'q': query, 'start': next - 1, 'limit': limit})
+        params = urlencode({'q': query, 'start': next_page - 1, 'limit': limit})
         result['next'] = reverse('geonode.maps.views.metadata_search') + '?' + params
     
     return result
@@ -1408,11 +1429,13 @@ def search_page(request):
 
     map_obj = Map(projection="EPSG:900913", zoom = 1, center_x = 0, center_y = 0)
 
+    csw = get_csw()
     return render_to_response('search.html', RequestContext(request, {
         'init_search': json.dumps(params or {}),
         'viewer_config': json.dumps(map_obj.viewer_json(*DEFAULT_BASE_LAYERS)),
         'GOOGLE_API_KEY' : settings.GOOGLE_API_KEY,
-        "site" : settings.SITEURL
+        "site" : settings.SITEURL,
+        "keywords": json.dumps(csw.identification.keywords)
     }))
 
 
@@ -1551,7 +1574,7 @@ def _maps_search(query, start, limit, sort_field, sort_dir):
 
     next_page = start + limit + 1
     if next_page < map_query.count():
-        params = urlencode({'q': query, 'start': next - 1, 'limit': limit})
+        params = urlencode({'q': query, 'start': next_page - 1, 'limit': limit})
         result['next'] = reverse('geonode.maps.views.maps_search') + '?' + params
     
     return result
