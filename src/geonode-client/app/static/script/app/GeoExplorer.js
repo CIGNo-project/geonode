@@ -53,13 +53,13 @@ var GeoExplorer = Ext.extend(gxp.Viewer, {
      * api: config[localGeoServerBaseUrl]
      * ``String`` url of the local GeoServer instance
      */
-    localGeoServerBaseUrl: "",
+    localGeoServerBaseUrl: null,
 
     /**
      * api: config[localCSWBaseUrl]
      * ``String`` url of the local CS-W instance
      */
-    localCSWBaseUrl: "",
+    localCSWBaseUrl: null,
 
     /**
      * api: config[useMapOverlay]
@@ -363,19 +363,35 @@ var GeoExplorer = Ext.extend(gxp.Viewer, {
     },
     
     loadConfig: function(config) {
-        config.sources['csw'] = {
-            ptype: "gxp_cataloguesource",
-            url: config.localCSWBaseUrl,
-            proxyOptions: {
-                listeners: {
-                    "beforeload": function(proxy, params) {
-                        params.headers = {
-                            'X-CSRFToken': Ext.util.Cookies.get('csrftoken')
-                        };
+        var beforeLoad = function(proxy, params) {
+            params.headers = {
+                'X-CSRFToken': Ext.util.Cookies.get('csrftoken')
+            };
+        };
+        var found = false;
+        for (var key in config.sources) {
+            var source = config.sources[key];
+            if (source.ptype === "gxp_cataloguesource" && source.url === config.localCSWBaseUrl) {
+                found = true;
+                Ext.apply(source.proxyOptions, {
+                    listeners: {
+                        "beforeload": beforeLoad
+                    }
+                });
+                break;
+            }
+        }
+        if (found === false) {
+            config.sources['csw'] = {
+                ptype: "gxp_cataloguesource",
+                url: config.localCSWBaseUrl,
+                proxyOptions: {
+                    listeners: {
+                        "beforeload": beforeLoad
                     }
                 }
-            }
-        };
+            };
+        }
         config.tools = (config.tools || []).concat({
             ptype: "gxp_zoom",
             actionTarget: {target: "paneltbar", index: 4}
@@ -400,11 +416,11 @@ var GeoExplorer = Ext.extend(gxp.Viewer, {
             ptype: "gxp_addlayers",
             search: true,
             actionTarget: "treetbar",
-            createExpander: function() {
+            createExpander: (config.localGeoServerBaseUrl) ? function() {
                 return new GeoExplorer.CapabilitiesRowExpander({
                     ows: config.localGeoServerBaseUrl + "ows"
                 });
-            }
+            }: undefined
         }, {
             ptype: "gxp_removelayer",
             actionTarget: ["treetbar", "treecontent.contextMenu"]
@@ -482,9 +498,11 @@ var GeoExplorer = Ext.extend(gxp.Viewer, {
             var startSourceId = null;
             for (var id in this.layerSources) {
                 source = this.layerSources[id];
-                if (source.store && source instanceof gxp.plugins.WMSSource &&
-                                source.url.indexOf("/geoserver/wms") === 0) {
-                    startSourceId = id;
+                if (source.store && 
+                    source instanceof gxp.plugins.WMSSource && (
+                    source.url.indexOf(this.localGeoServerBaseUrl) === 0 || 
+                    source.url.indexOf("/geoserver/wms") === 0)) {
+                        startSourceId = id;
                 }
             }
             // find the add layers plugin
