@@ -178,7 +178,7 @@ def mapJSON(request, mapid):
                 mimetype="text/plain",
                 status=204
             )
-        except Exception:
+        except Exception, e:
             return HttpResponse(
                 "The server could not understand the request." + str(e),
                 mimetype="text/plain",
@@ -1310,6 +1310,18 @@ def search_result_detail(request):
     except Exception:
         layer = None
         layer_is_remote = True
+
+    
+    md_link = settings.GEONETWORK_BASE_URL + "srv/en/csw?" + urlencode({
+            "request": "GetRecordById",
+            "service": "CSW",
+            "version": "2.0.2",
+            "OutputSchema": "http://www.isotc211.org/2005/gmd",
+            "ElementSetName": "full",
+            "id": rec.identifier
+            })
+    rec.metadata_links = [("text/xml", "TC211", md_link)]
+
 
     return render_to_response('maps/search_result_snippet.html', RequestContext(request, {
         'rec': rec,
